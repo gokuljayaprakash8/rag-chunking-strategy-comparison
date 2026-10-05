@@ -1,0 +1,39 @@
+{
+  "source_document": "data/diabetes_reference_document.md",
+  "questions_file": "data/questions.json",
+  "results_directory": "results",
+  "top_k": 3,
+  "similarity": "cosine",
+  "strategies": {
+    "A": {
+      "label": "Strategy A — Fixed-size",
+      "method": "fixed_size",
+      "chunk_size": 500,
+      "overlap": 50
+    },
+    "B": {
+      "label": "Strategy B — Structure-aware",
+      "method": "structure_aware",
+      "hierarchy": [
+        "section",
+        "paragraph",
+        "sentence"
+      ],
+      "preserve_markdown_headings": true,
+      "preserve_natural_sections": true,
+      "max_chunk_characters": null
+    }
+  },
+  "embedding": {
+    "model": null,
+    "adapter": null,
+    "parameters": null,
+    "reproducibility": {
+      "mode": null,
+      "seed": null
+    }
+  },
+  "evaluation": {
+    "procedure": "manual_source_grounded"
+  }
+}
