@@ -85,6 +85,7 @@ absence also expose limits in this document-specific setup.
 ## Run
 
 From the project root, run `python3 src/rag.py`. The first run downloads the
-pinned public model assets to the local Hugging Face cache. Retrieval records are
-written to `results/`; manual evaluations are source-only and are stored with the
-result.
+pinned public model assets to the local Hugging Face cache. Each run writes a
+retrieval record to `results/` with manual fields pending; assess a new run's
+top-three contexts against the source before treating it as finalized. The
+result linked above is the completed source-only assessment.
