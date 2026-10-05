@@ -1,50 +1,35 @@
 # Controlled RAG chunking experiment
 
-`src/rag.py` implements retrieval-only comparison of the same source Markdown and
-the same 10 supplied questions with two chunking strategies:
+This is a retrieval-only comparison over `data/diabetes_reference_document.md`
+and the ten verbatim questions in `data/questions.json`. No answer generation or
+outside medical source is used.
 
-- **A — Fixed-size:** exactly 500 characters with 50 characters of overlap.
-- **B — Structure-aware:** preserves Markdown heading-defined sections and
-  records each chunk's heading path. No maximum size is imposed unless
-  `max_chunk_characters` is explicitly set; if set, splitting uses paragraph
-  boundaries first and sentence boundaries only for paragraphs that exceed the
-  cap. Any sentence still longer than the cap remains intact.
+## Fixed configuration
 
-Both strategies use the one embedding configuration in `config/experiment.json`,
-the same adapter call, cosine similarity, and top-k of 3. Query embeddings are
-computed once and reused for both strategies. Retrieval has no similarity
-threshold or reranker. Results record the full configuration, source and
-question hashes, chunk text and character offsets, embedding fingerprints,
-retrieved chunks, scores, and the exact assembled context.
+- **Embedding model:** `sentence-transformers/all-MiniLM-L6-v2`, pinned to the
+  revision recorded in `config/experiment.json`. The official repository ONNX
+  transformer graph and tokenizer are used with the model's configured
+  attention-masked mean pooling and L2 normalization.
+- **Similarity:** NumPy cosine similarity; **top-k:** 3; no reranker or threshold.
+- **A — Basic / Naive:** ordinary 500-character slicing with 50-character overlap.
+- **B — Advanced / Structure-aware:** Markdown heading-defined sections are
+  preserved as chunks. The configured size cap is `null`, so each natural
+  section remains intact; paragraphs and sentences are only split if a cap is
+  deliberately configured.
+- Query embeddings are generated once and reused for both strategies. The model
+  runs locally through ONNX Runtime's CPU provider.
 
-## Required user-supplied inputs
+Each run writes a machine-readable JSON record to `results/`, including source
+and question hashes, chunk contents and offsets, model asset hashes, top-three
+IDs and scores, and the exact retrieved context. The run file is manually
+annotated against the source after retrieval. Q9 is recorded as absent from the
+reference; no outside glucose target is supplied.
 
-The experiment intentionally cannot run with the current configuration:
-
-1. Set `embedding.model` to the exact chosen model identifier.
-2. Set `embedding.adapter` to an importable `python.module:callable`.
-3. Supply the adapter's explicit `parameters` object. Use `{}` only if the
-   selected adapter requires no additional parameters.
-4. Set reproducibility mode to `deterministic` with `seed: null`, or to `seeded`
-   with an explicit integer seed. The adapter must honor the supplied model,
-   parameters, and seed.
-5. Create `data/questions.json` as a JSON array containing exactly 10 strings
-   in official assignment order. Enter each question verbatim; do not change
-   Question 3's wording.
-
-No question examples or answer text are included. The framework does not generate
-answers because no answer-generation model or procedure was supplied. It
-preserves retrieved context for manual source-grounded assessment, with separate
-fields for source answerability, support by retrieved content, and incorrect or
-incomplete retrieval.
-
-Run from the project root with:
+Run from the project root:
 
 ```sh
 python src/rag.py
 ```
 
-The command validates all inputs before embedding anything and writes one
-auditable JSON run record under `results/` only after both strategies complete.
-The Markdown source is read as UTF-8 without newline conversion and is never
-modified.
+The final question-by-question comparison, accuracy calculation, and analysis
+are in `README.md`.

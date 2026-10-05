@@ -1,33 +1,37 @@
 #!/usr/bin/env python3
-"""Controlled, retrieval-only RAG chunking comparison.
-
-No embedding model, answer generator, or question set is selected by this
-module. Fill in config/experiment.json and provide data/questions.json before
-running it. The embedding adapter is a user-supplied Python callable with this
-interface:
-
-    embed_text(text, *, model, parameters, seed) -> sequence[float]
-
-The adapter must use the requested model and parameters and honor the supplied
-seed. In deterministic mode it must provide deterministic embeddings.
-"""
+"""Controlled, retrieval-only RAG chunking comparison."""
 
 from __future__ import annotations
 
 import argparse
 import copy
 import hashlib
-import importlib
-import inspect
 import json
-import math
 import os
 import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
+
+import numpy as np
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from src.embedding import (
+        MODEL_ID,
+        MODEL_REVISION,
+        EmbeddingError,
+        SentenceTransformerOnnx,
+    )
+else:
+    from .embedding import (
+        MODEL_ID,
+        MODEL_REVISION,
+        EmbeddingError,
+        SentenceTransformerOnnx,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -46,9 +50,6 @@ STRUCTURE_HIERARCHY = ["section", "paragraph", "sentence"]
 EVALUATION_PROCEDURE = "manual_source_grounded"
 
 JSONDict = dict[str, Any]
-EmbeddingFunction = Callable[..., Sequence[float]]
-
-
 class ExperimentError(Exception):
     """An input or runtime error that should be shown clearly to the user."""
 
@@ -188,8 +189,8 @@ def _validate_strategies(value: Any) -> None:
         {"label", "method", "chunk_size", "overlap"},
         "strategies.A",
     )
-    if a["label"] != "Strategy A — Fixed-size":
-        raise ExperimentError("Strategy A label must be 'Strategy A — Fixed-size'.")
+    if a["label"] != "Strategy A — Basic / Naive":
+        raise ExperimentError("Strategy A label must be 'Strategy A — Basic / Naive'.")
     if a["method"] != "fixed_size":
         raise ExperimentError("Strategy A method must be 'fixed_size'.")
     if (
@@ -217,8 +218,10 @@ def _validate_strategies(value: Any) -> None:
         },
         "strategies.B",
     )
-    if b["label"] != "Strategy B — Structure-aware":
-        raise ExperimentError("Strategy B label must be 'Strategy B — Structure-aware'.")
+    if b["label"] != "Strategy B — Advanced / Structure-aware":
+        raise ExperimentError(
+            "Strategy B label must be 'Strategy B — Advanced / Structure-aware'."
+        )
     if b["method"] != "structure_aware":
         raise ExperimentError("Strategy B method must be 'structure_aware'.")
     if b["hierarchy"] != STRUCTURE_HIERARCHY:
@@ -240,50 +243,26 @@ def _validate_strategies(value: Any) -> None:
 
 def _validate_embedding_config(value: Any) -> None:
     embedding = _require_exact_keys(
-        value, {"model", "adapter", "parameters", "reproducibility"}, "embedding"
+        value,
+        {"model", "revision", "backend", "batch_size", "max_seq_length", "device"},
+        "embedding",
     )
-    _non_empty_string(embedding["model"], "embedding.model")
-
-    adapter = _non_empty_string(embedding["adapter"], "embedding.adapter")
-    if adapter.count(":") != 1:
+    if embedding["model"] != MODEL_ID:
+        raise ExperimentError(f"embedding.model must be exactly {MODEL_ID!r}.")
+    if embedding["revision"] != MODEL_REVISION:
         raise ExperimentError(
-            "embedding.adapter must use the explicit 'python.module:callable' form."
+            f"embedding.revision must be exactly {MODEL_REVISION!r}."
         )
-    module_name, function_name = adapter.split(":", 1)
-    if (
-        not module_name
-        or not function_name
-        or not all(part.isidentifier() for part in module_name.split("."))
-        or not function_name.isidentifier()
-    ):
+    if embedding["backend"] != "onnxruntime-cpu":
+        raise ExperimentError("embedding.backend must be 'onnxruntime-cpu'.")
+    if embedding["batch_size"] != 32:
+        raise ExperimentError("embedding.batch_size must be exactly 32.")
+    if embedding["max_seq_length"] != 256:
+        raise ExperimentError("embedding.max_seq_length must be exactly 256.")
+    if embedding["device"] != "CPUExecutionProvider":
         raise ExperimentError(
-            "embedding.adapter must use the explicit 'python.module:callable' form."
+            "embedding.device must be 'CPUExecutionProvider'."
         )
-
-    if not isinstance(embedding["parameters"], dict):
-        raise ExperimentError(
-            "embedding.parameters must be explicitly supplied as a JSON object "
-            "(use {} only if the selected adapter needs no parameters)."
-        )
-
-    reproducibility = _require_exact_keys(
-        embedding["reproducibility"], {"mode", "seed"}, "embedding.reproducibility"
-    )
-    mode = reproducibility["mode"]
-    seed = reproducibility["seed"]
-    if not isinstance(mode, str) or mode not in {"deterministic", "seeded"}:
-        raise ExperimentError(
-            "embedding.reproducibility.mode must be explicitly set to "
-            "'deterministic' or 'seeded'."
-        )
-    if mode == "deterministic" and seed is not None:
-        raise ExperimentError(
-            "Use seed: null in deterministic mode; no random seed is applied."
-        )
-    if mode == "seeded" and (
-        isinstance(seed, bool) or not isinstance(seed, int)
-    ):
-        raise ExperimentError("Seeded mode requires an explicit integer seed.")
 
 
 def _load_source(path: Path) -> tuple[str, bytes]:
@@ -441,7 +420,7 @@ def fixed_size_chunks(
         chunks.append(
             _chunk_from_span(
                 strategy=STRATEGY_A,
-                label="Strategy A — Fixed-size",
+                label="Strategy A — Basic / Naive",
                 index=len(chunks) + 1,
                 start=start,
                 end=end,
@@ -588,7 +567,7 @@ def structure_aware_chunks(
             chunks.append(
                 _chunk_from_span(
                     strategy=STRATEGY_B,
-                    label="Strategy B — Structure-aware",
+                    label="Strategy B — Advanced / Structure-aware",
                     index=len(chunks) + 1,
                     start=start,
                     end=end,
@@ -600,118 +579,32 @@ def structure_aware_chunks(
     return chunks
 
 
-def _seed_for_text(mode: str, base_seed: int | None, text: str) -> int | None:
-    if mode == "deterministic":
-        return None
-    assert base_seed is not None
-    material = f"{base_seed}\0{text}".encode("utf-8")
-    return int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
-
-
-def _load_embedding_adapter(
-    adapter_spec: str,
-) -> tuple[EmbeddingFunction, JSONDict]:
-    module_name, function_name = adapter_spec.split(":", 1)
-    try:
-        module = importlib.import_module(module_name)
-    except Exception as exc:
-        raise ExperimentError(
-            f"Cannot import embedding adapter module {module_name!r}: {exc}"
-        ) from exc
-    function = getattr(module, function_name, None)
-    if not callable(function):
-        raise ExperimentError(
-            f"Embedding adapter {adapter_spec!r} is not an importable callable."
-        )
-
-    source_path: str | None = None
-    source_hash: str | None = None
-    try:
-        adapter_file = inspect.getsourcefile(function)
-        if adapter_file and Path(adapter_file).is_file():
-            adapter_bytes = Path(adapter_file).read_bytes()
-            source_path = str(Path(adapter_file).resolve())
-            source_hash = _sha256(adapter_bytes)
-    except (OSError, TypeError):
-        pass
-    return function, {
-        "callable": adapter_spec,
-        "source_file": source_path,
-        "source_sha256": source_hash,
-        "module_version": getattr(module, "__version__", None),
-    }
-
-
-def _embed(
-    adapter: EmbeddingFunction,
-    text: str,
-    embedding_config: JSONDict,
-) -> list[float]:
-    reproducibility = embedding_config["reproducibility"]
-    seed = _seed_for_text(
-        reproducibility["mode"], reproducibility["seed"], text
-    )
-    try:
-        raw_vector = adapter(
-            text,
-            model=embedding_config["model"],
-            parameters=copy.deepcopy(embedding_config["parameters"]),
-            seed=seed,
-        )
-        if isinstance(raw_vector, (str, bytes, bytearray)):
-            raise TypeError("adapter must return a numeric sequence, not text or bytes")
-        vector = [float(value) for value in raw_vector]
-    except Exception as exc:
-        raise ExperimentError(f"Embedding adapter failed: {exc}") from exc
-    if not vector:
-        raise ExperimentError("Embedding adapter returned an empty vector.")
-    if any(not math.isfinite(value) for value in vector):
-        raise ExperimentError("Embedding adapter returned a non-finite vector value.")
-    return vector
-
-
 def _vector_sha256(vector: Sequence[float]) -> str:
     stable = [float(value).hex() for value in vector]
     return _sha256(_canonical_json(stable))
 
 
 def cosine_similarity(left: Sequence[float], right: Sequence[float]) -> float:
-    if len(left) != len(right):
+    left_array = np.asarray(left, dtype=np.float32)
+    right_array = np.asarray(right, dtype=np.float32)
+    if left_array.shape != right_array.shape:
         raise ExperimentError(
-            f"Embedding dimension mismatch ({len(left)} != {len(right)})."
+            f"Embedding dimension mismatch ({left_array.shape} != {right_array.shape})."
         )
-    left_norm = math.sqrt(math.fsum(value * value for value in left))
-    right_norm = math.sqrt(math.fsum(value * value for value in right))
+    left_norm = np.linalg.norm(left_array)
+    right_norm = np.linalg.norm(right_array)
     if left_norm == 0 or right_norm == 0:
         raise ExperimentError("Cosine similarity is undefined for a zero vector.")
-    score = math.fsum(a * b for a, b in zip(left, right)) / (left_norm * right_norm)
-    if not math.isfinite(score):
+    score = float(np.dot(left_array, right_array) / (left_norm * right_norm))
+    if not np.isfinite(score):
         raise ExperimentError("Cosine similarity produced a non-finite score.")
-    return score
+    return float(score)
 
 
 def _manual_evaluation_fields() -> JSONDict:
     return {
-        "source_answerability": "not_assessed",
-        "retrieved_content_support": "not_assessed",
-        "retrieval_quality": "not_assessed",
-        "assessor_notes": None,
-        "allowed_source_answerability_values": [
-            "answerable_from_source",
-            "not_answerable_from_source",
-            "uncertain",
-            "not_assessed",
-        ],
-        "allowed_retrieved_content_support_values": [
-            "supported_by_retrieved_content",
-            "not_supported_by_retrieved_content",
-            "not_assessed",
-        ],
-        "allowed_retrieval_quality_values": [
-            "correct",
-            "incorrect_or_incomplete_retrieval",
-            "not_assessed",
-        ],
+        "assessment": "not_assessed",
+        "justification": None,
     }
 
 
@@ -776,8 +669,6 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
     source, source_bytes = _load_source(source_path)
     questions, questions_bytes = _load_questions(questions_path)
 
-    adapter, adapter_metadata = _load_embedding_adapter(config["embedding"]["adapter"])
-
     chunks_by_strategy: dict[str, list[Chunk]] = {
         STRATEGY_A: fixed_size_chunks(
             source,
@@ -798,26 +689,35 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
             f"Each strategy must produce at least {TOP_K} chunks for top-k retrieval."
         )
 
-    # Query embeddings are generated once and reused unchanged for A and B.
-    query_vectors = [
-        _embed(adapter, question["text"], config["embedding"])
-        for question in questions
-    ]
-    query_dimensions = {len(vector) for vector in query_vectors}
-    if len(query_dimensions) != 1:
-        raise ExperimentError("The embedding adapter returned inconsistent query dimensions.")
+    embedding_config = config["embedding"]
+    try:
+        model = SentenceTransformerOnnx(
+            model_id=embedding_config["model"],
+            revision=embedding_config["revision"],
+            batch_size=embedding_config["batch_size"],
+            max_seq_length=embedding_config["max_seq_length"],
+            device=embedding_config["device"],
+        )
+    except EmbeddingError as exc:
+        raise ExperimentError(str(exc)) from exc
+
+    # Encode each distinct query/chunk string once, then reuse exact vectors.
+    all_texts = [question["text"] for question in questions]
+    for strategy_key in (STRATEGY_A, STRATEGY_B):
+        all_texts.extend(chunk.content for chunk in chunks_by_strategy[strategy_key])
+    unique_texts = list(dict.fromkeys(all_texts))
+    vectors = model.encode(unique_texts)
+    if vectors.shape != (len(unique_texts), 384):
+        raise ExperimentError(
+            f"The embedding model returned an unexpected shape: {vectors.shape}."
+        )
+    vectors_by_text = dict(zip(unique_texts, vectors))
+    query_vectors = [vectors_by_text[question["text"]] for question in questions]
 
     strategy_results: JSONDict = {}
-    expected_dimension = next(iter(query_dimensions))
     for strategy_key in (STRATEGY_A, STRATEGY_B):
         chunks = chunks_by_strategy[strategy_key]
-        chunk_vectors = [
-            _embed(adapter, chunk.content, config["embedding"]) for chunk in chunks
-        ]
-        if any(len(vector) != expected_dimension for vector in chunk_vectors):
-            raise ExperimentError(
-                "Query and document embeddings must have identical dimensions."
-            )
+        chunk_vectors = [vectors_by_text[chunk.content] for chunk in chunks]
 
         questions_results = [
             _rank_context(
@@ -843,6 +743,14 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
                 for chunk, vector in zip(chunks, chunk_vectors)
             ],
             "questions": questions_results,
+            "chunk_statistics": {
+                "count": len(chunks),
+                "average_characters": float(
+                    np.mean([len(chunk.content) for chunk in chunks])
+                ),
+                "minimum_characters": min(len(chunk.content) for chunk in chunks),
+                "maximum_characters": max(len(chunk.content) for chunk in chunks),
+            },
         }
 
     timestamp = datetime.now(timezone.utc)
@@ -858,7 +766,7 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
         )
     )
     run_record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_signature_sha256": run_signature,
         "created_at_utc": created_at,
         "status": "retrieval_complete_manual_evaluation_pending",
@@ -878,18 +786,9 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
             "items": copy.deepcopy(questions),
         },
         "embedding_pipeline": {
-            "model": config["embedding"]["model"],
-            "parameters": copy.deepcopy(config["embedding"]["parameters"]),
-            "reproducibility": copy.deepcopy(
-                config["embedding"]["reproducibility"]
-            ),
-            "call_contract": "embed_text(text, *, model, parameters, seed)",
+            **model.metadata(),
             "query_embeddings_generated_once_and_reused_for_both_strategies": True,
-            "seed_policy": (
-                "None in deterministic mode; in seeded mode, the first 8 bytes "
-                "of SHA-256(f'{base_seed}\\0{text}') as an unsigned integer."
-            ),
-            "adapter": adapter_metadata,
+            "unique_input_text_count": len(unique_texts),
         },
         "retrieval_configuration": {
             "similarity": SIMILARITY,
@@ -901,12 +800,24 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
         "answering_and_evaluation": {
             "answer_generation": "not performed",
             "manual_evaluation_procedure": EVALUATION_PROCEDURE,
+            "source_restriction": (
+                "Judge only against the supplied source document; do not use "
+                "external medical facts."
+            ),
             "assessment_fields": [
-                "source_answerability",
-                "retrieved_content_support",
-                "retrieval_quality",
-                "assessor_notes",
+                "assessment",
+                "justification",
             ],
+            "allowed_assessments": ["YES", "PARTIAL", "NO"],
+            "rubric": {
+                "YES": "The top-3 context contains sufficient source-supported evidence.",
+                "PARTIAL": "The top-3 context contains some relevant but incomplete evidence.",
+                "NO": "The top-3 context cannot support an answer from the source.",
+            },
+            "accuracy_rule": (
+                "Percentage of the 10 questions assessed YES for each strategy; "
+                "PARTIAL and NO are not counted as YES."
+            ),
         },
         "strategies": strategy_results,
     }

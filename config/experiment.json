@@ -6,13 +6,13 @@
   "similarity": "cosine",
   "strategies": {
     "A": {
-      "label": "Strategy A — Fixed-size",
+      "label": "Strategy A — Basic / Naive",
       "method": "fixed_size",
       "chunk_size": 500,
       "overlap": 50
     },
     "B": {
-      "label": "Strategy B — Structure-aware",
+      "label": "Strategy B — Advanced / Structure-aware",
       "method": "structure_aware",
       "hierarchy": [
         "section",
@@ -25,13 +25,12 @@
     }
   },
   "embedding": {
-    "model": null,
-    "adapter": null,
-    "parameters": null,
-    "reproducibility": {
-      "mode": null,
-      "seed": null
-    }
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "backend": "onnxruntime-cpu",
+    "batch_size": 32,
+    "max_seq_length": 256,
+    "device": "CPUExecutionProvider"
   },
   "evaluation": {
     "procedure": "manual_source_grounded"
