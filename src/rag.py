@@ -675,54 +675,7 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
             size=config["strategies"][STRATEGY_A]["chunk_size"],
             overlap=config["strategies"][STRATEGY_A]["overlap"],
         ),
-        STRATEGY_B: structure_aware_chunks(
-            source,
-            max_chunk_characters=config["strategies"][STRATEGY_B][
-                "max_chunk_characters"
-            ],
-        ),
-    }
-    if any(not chunks for chunks in chunks_by_strategy.values()):
-        raise ExperimentError("A chunking strategy produced no chunks.")
-    if any(len(chunks) < TOP_K for chunks in chunks_by_strategy.values()):
-        raise ExperimentError(
-            f"Each strategy must produce at least {TOP_K} chunks for top-k retrieval."
-        )
-
-    embedding_config = config["embedding"]
-    try:
-        model = SentenceTransformerOnnx(
-            model_id=embedding_config["model"],
-            revision=embedding_config["revision"],
-            batch_size=embedding_config["batch_size"],
-            max_seq_length=embedding_config["max_seq_length"],
-            device=embedding_config["device"],
-        )
-    except EmbeddingError as exc:
-        raise ExperimentError(str(exc)) from exc
-
-    # Encode each distinct query/chunk string once, then reuse exact vectors.
-    all_texts = [question["text"] for question in questions]
-    for strategy_key in (STRATEGY_A, STRATEGY_B):
-        all_texts.extend(chunk.content for chunk in chunks_by_strategy[strategy_key])
-    unique_texts = list(dict.fromkeys(all_texts))
-    vectors = model.encode(unique_texts)
-    if vectors.shape != (len(unique_texts), 384):
-        raise ExperimentError(
-            f"The embedding model returned an unexpected shape: {vectors.shape}."
-        )
-    vectors_by_text = dict(zip(unique_texts, vectors))
-    query_vectors = [vectors_by_text[question["text"]] for question in questions]
-
-    strategy_results: JSONDict = {}
-    for strategy_key in (STRATEGY_A, STRATEGY_B):
-        chunks = chunks_by_strategy[strategy_key]
-        chunk_vectors = [vectors_by_text[chunk.content] for chunk in chunks]
-
-        questions_results = [
-            _rank_context(
-                query_vector,
-                chunks,
+    ,
                 chunk_vectors,
                 question,
                 _vector_sha256(query_vector),
