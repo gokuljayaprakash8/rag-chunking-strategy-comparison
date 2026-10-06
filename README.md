@@ -1,3 +1,7 @@
+## Hypothesis
+
+Hypothesis: preserving document structure and semantic boundaries will improve retrieval of relevant evidence compared with fixed-size chunking when retrieval depth is held constant.
+
 Controlled RAG Chunking Strategy Comparison
 
 Scope and Method
@@ -113,8 +117,8 @@ The source-grounded manual evaluation is stored in:
 
 Final run files:
 
-- "results/rag_run_20261006T134057.247099Z_cc70ba5ff65d.json" — "k=3"
-- "results/rag_run_20261006T134136.403182Z_f49b824d1ec6.json" — "k=5"
+- "results/" — "k=3"
+- "results/" — "k=5"
 
 Reproduction
 

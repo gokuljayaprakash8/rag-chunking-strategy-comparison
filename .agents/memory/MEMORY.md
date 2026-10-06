@@ -1,1 +1,0 @@
-- [Python model package index](python-model-package-index.md) — Sentence-Transformers packages may be routed to an empty CPU wheel index; preserve the exact model with its official ONNX export when needed.

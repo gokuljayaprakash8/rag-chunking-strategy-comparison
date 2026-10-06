@@ -1,5 +1,9 @@
 # Experiment Methodology
 
+## Hypothesis
+
+Hypothesis: preserving document structure and semantic boundaries will improve retrieval of relevant evidence compared with fixed-size chunking when retrieval depth is held constant.
+
 ## Objective
 Compare a basic fixed-size RAG chunking strategy with a structure-aware strategy while keeping the source document, embedding model, questions, similarity calculation, and retrieval procedure fixed.
 
