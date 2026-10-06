@@ -164,7 +164,7 @@ def validate_config(config: Any) -> None:
     if (
         isinstance(config["top_k"], bool)
         or not isinstance(config["top_k"], int)
-        or config["top_k"] != TOP_K
+        or config["top_k"] < 1
     ):
         raise ExperimentError(f"top_k must be exactly {TOP_K}.")
     if config["similarity"] != SIMILARITY:
@@ -549,7 +549,14 @@ def structure_aware_chunks(
                 if index + 1 < len(headings)
                 else len(source)
             )
-            spans.append((heading.start_char, end, paths[index]))
+
+            # Treat the Markdown heading as metadata/context for a
+            # substantive section. Do not emit a heading-only chunk.
+            line_end = source.find("\n", heading.start_char)
+            body_start = len(source) if line_end == -1 else line_end + 1
+
+            if source[body_start:end].strip():
+                spans.append((body_start, end, paths[index]))
 
     chunks: list[Chunk] = []
     for section_start, section_end, path in spans:
@@ -614,6 +621,7 @@ def _rank_context(
     chunk_vectors: list[list[float]],
     question: dict[str, str],
     query_vector_sha256: str,
+    top_k: int,
 ) -> JSONDict:
     ranked: list[tuple[float, int]] = []
     for index, chunk_vector in enumerate(chunk_vectors):
@@ -621,7 +629,7 @@ def _rank_context(
     ranked.sort(key=lambda item: (-item[0], item[1]))
 
     retrieved: list[JSONDict] = []
-    for rank, (score, index) in enumerate(ranked[:TOP_K], start=1):
+    for rank, (score, index) in enumerate(ranked[:top_k], start=1):
         chunk = chunks[index]
         retrieved.append(
             {
@@ -641,7 +649,7 @@ def _rank_context(
         "question_id": question["id"],
         "question": question["text"],
         "query_embedding_sha256": query_vector_sha256,
-        "retrieved_top_3": retrieved,
+        "retrieved_top_" + str(top_k): retrieved,
         "retrieved_context": context,
         "answer_generation": {
             "status": "not_performed",
@@ -669,16 +677,66 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
     source, source_bytes = _load_source(source_path)
     questions, questions_bytes = _load_questions(questions_path)
 
+    top_k = config["top_k"]
+
     chunks_by_strategy: dict[str, list[Chunk]] = {
         STRATEGY_A: fixed_size_chunks(
             source,
             size=config["strategies"][STRATEGY_A]["chunk_size"],
             overlap=config["strategies"][STRATEGY_A]["overlap"],
         ),
-    ,
+        STRATEGY_B: structure_aware_chunks(
+            source,
+            max_chunk_characters=config["strategies"][STRATEGY_B][
+                "max_chunk_characters"
+            ],
+        ),
+    }
+    if any(not chunks for chunks in chunks_by_strategy.values()):
+        raise ExperimentError("A chunking strategy produced no chunks.")
+    if any(len(chunks) < top_k for chunks in chunks_by_strategy.values()):
+        raise ExperimentError(
+            f"Each strategy must produce at least {top_k} chunks for top-k retrieval."
+        )
+
+    embedding_config = config["embedding"]
+    try:
+        model = SentenceTransformerOnnx(
+            model_id=embedding_config["model"],
+            revision=embedding_config["revision"],
+            batch_size=embedding_config["batch_size"],
+            max_seq_length=embedding_config["max_seq_length"],
+            device=embedding_config["device"],
+        )
+    except EmbeddingError as exc:
+        raise ExperimentError(str(exc)) from exc
+
+    # Encode each distinct query/chunk string once, then reuse exact vectors.
+    all_texts = [question["text"] for question in questions]
+    for strategy_key in (STRATEGY_A, STRATEGY_B):
+        all_texts.extend(chunk.content for chunk in chunks_by_strategy[strategy_key])
+    unique_texts = list(dict.fromkeys(all_texts))
+    vectors = model.encode(unique_texts)
+    if vectors.shape != (len(unique_texts), 384):
+        raise ExperimentError(
+            f"The embedding model returned an unexpected shape: {vectors.shape}."
+        )
+    vectors_by_text = dict(zip(unique_texts, vectors))
+    query_vectors = [vectors_by_text[question["text"]] for question in questions]
+
+    strategy_results: JSONDict = {}
+    for strategy_key in (STRATEGY_A, STRATEGY_B):
+        chunks = chunks_by_strategy[strategy_key]
+        chunk_vectors = [vectors_by_text[chunk.content] for chunk in chunks]
+
+        questions_results = [
+            _rank_context(
+                query_vector,
+                chunks,
                 chunk_vectors,
                 question,
                 _vector_sha256(query_vector),
+                top_k,
             )
             for question, query_vector in zip(questions, query_vectors)
         ]
@@ -745,7 +803,7 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
         },
         "retrieval_configuration": {
             "similarity": SIMILARITY,
-            "top_k": TOP_K,
+            "top_k": config["top_k"],
             "tie_break": "source chunk order (ascending chunk index)",
             "reranking": False,
             "similarity_threshold": None,

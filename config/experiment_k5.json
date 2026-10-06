@@ -2,7 +2,7 @@
   "source_document": "data/diabetes_reference_document.md",
   "questions_file": "data/questions.json",
   "results_directory": "results",
-  "top_k": 3,
+  "top_k": 5,
   "similarity": "cosine",
   "strategies": {
     "A": {
