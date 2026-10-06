@@ -821,9 +821,9 @@ def run_experiment(config_path: Path = DEFAULT_CONFIG_PATH) -> Path:
             ],
             "allowed_assessments": ["YES", "PARTIAL", "NO"],
             "rubric": {
-                "YES": "The top-3 context contains sufficient source-supported evidence.",
-                "PARTIAL": "The top-3 context contains some relevant but incomplete evidence.",
-                "NO": "The top-3 context cannot support an answer from the source.",
+                "YES": f"The top-{top_k} context contains sufficient source-supported evidence.",
+                "PARTIAL": f"The top-{top_k} context contains some relevant but incomplete evidence.",
+                "NO": f"The top-{top_k} context cannot support an answer from the source.",
             },
             "accuracy_rule": (
                 "Percentage of the 10 questions assessed YES for each strategy; "
