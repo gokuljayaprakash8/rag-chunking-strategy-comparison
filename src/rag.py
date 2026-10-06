@@ -556,7 +556,7 @@ def structure_aware_chunks(
             body_start = len(source) if line_end == -1 else line_end + 1
 
             if source[body_start:end].strip():
-                spans.append((body_start, end, paths[index]))
+                spans.append((heading.start_char, end, paths[index]))
 
     chunks: list[Chunk] = []
     for section_start, section_end, path in spans:

@@ -1,33 +1,25 @@
-# Manual Retrieval Evaluation
+# Manual Source-Grounded Evaluation
 
-Evaluation is source-grounded and retrieval-only. A result is scored from the
-retrieved chunk text, not from outside medical knowledge.
+Evaluation rule: a question is marked YES when the retrieved top-k chunks contain the correct answer in the supplied reference document. PARTIAL means the retrieved source contains only part of the requested information or the reference itself provides only partial information. NO means the retrieved top-k chunks do not contain the requested answer, or the reference document does not provide it.
 
-## Scoring
-
-YES = retrieved evidence contains the complete answer supported by the reference.
-PARTIAL = retrieved evidence contains only part of the requested answer.
-NO = retrieved evidence does not contain the answer, or the reference itself
-does not provide the requested information.
-
-## Question-level judgments
-
-### k=3
+## k=3
 
 | Question | Strategy A | Strategy B | Notes |
 |---|---|---|---|
-| Q1 | YES | YES | Diagnostic criteria are present in the Diagnostic Criteria section. |
-| Q2 | YES | YES | Prediabetes HbA1c range is present in Diagnostic Criteria. |
-| Q3 | PARTIAL | PARTIAL | Oral medication classes are listed, but the source explicitly identifies metformin as usually first-line; it does not identify three first-line drugs. |
-| Q4 | YES | YES | Classic hyperglycemia symptoms are present in Symptoms. |
-| Q5 | YES | YES | Lifestyle modifications are present in Lifestyle Modifications. |
-| Q6 | YES | YES | Microvascular complications are present in Microvascular Complications. |
-| Q7 | NO | NO | The Macrovascular Complications evidence is not in the top-3 retrieved set. |
-| Q8 | YES | YES | Monitoring frequency is present in Monitoring and Follow-up. |
+| Q1 | YES | YES | Diagnostic evidence is retrieved. |
+| Q2 | YES | YES | Prediabetes HbA1c evidence is retrieved. |
+| Q3 | PARTIAL | PARTIAL | The reference identifies metformin as usually first-line but does not explicitly provide three named first-line oral medications. |
+| Q4 | YES | YES | Symptom evidence is retrieved. |
+| Q5 | YES | YES | Lifestyle evidence is retrieved. |
+| Q6 | YES | YES | Microvascular complication evidence is retrieved. |
+| Q7 | NO | YES | Strategy A does not retrieve the macrovascular evidence in the top-3; Strategy B retrieves it at rank 2. |
+| Q8 | YES | YES | Monitoring frequency is retrieved in the Monitoring and Follow-up evidence. |
 | Q9 | NO | NO | The reference document does not provide the requested blood-glucose target range. |
-| Q10 | YES | YES | Emergency symptoms are present in When to Seek Emergency Care. |
+| Q10 | YES | YES | Emergency-care evidence is retrieved. |
 
-### k=5
+**k=3 summary:** A = 7/10 (70%); B = 8/10 (80%).
+
+## k = 5
 
 | Question | Strategy A | Strategy B | Notes |
 |---|---|---|---|
@@ -36,19 +28,21 @@ does not provide the requested information.
 | Q3 | PARTIAL | PARTIAL | Same source limitation as k=3. |
 | Q4 | YES | YES | Symptom evidence is retrieved. |
 | Q5 | YES | YES | Lifestyle evidence is retrieved. |
-| Q6 | YES | YES | Microvascular evidence is retrieved. |
-| Q7 | NO | YES | Strategy B retrieves Macrovascular Complications at rank 5; Strategy A still misses it. |
-| Q8 | NO | YES | Strategy A's top-5 retrieved chunks do not contain the monitoring-frequency answer; Strategy B retrieves the Monitoring and Follow-up section. |
+| Q6 | YES | YES | Microvascular complication evidence is retrieved. |
+| Q7 | YES | YES | Strategy A retrieves the macrovascular evidence at rank 5; Strategy B retrieves it at rank 2. |
+| Q8 | YES | YES | Strategy A retrieves the monitoring-frequency evidence at rank 1; Strategy B also retrieves it at rank 1. |
 | Q9 | NO | NO | Source gap remains. |
 | Q10 | YES | YES | Emergency-care evidence is retrieved. |
 
+**k=5 summary:** A = 8/10 (80%); B = 8/10 (80%).
+
 ## Interpretation
 
-For the answerable questions, k=5 improves Strategy B by recovering the
-macrovascular evidence that k=3 missed. The experiment therefore demonstrates
-a concrete recall benefit from increasing k, although the additional retrieved
-chunks can also introduce less relevant context.
 
-Q3 remains PARTIAL because the evaluation is restricted to the supplied
-reference document. Q9 remains a deliberate source-gap result rather than
-being filled with external medical knowledge.
+Increasing k from 3 to 5 improves Strategy A from 70% to 80%, while Strategy B remains at 80%. The main change is Q7: the macrovascular evidence is outside Strategy A's top-3 but appears at rank 5, while Strategy B retrieves the corresponding macrovascular chunk at rank 2 even at k=3.
+
+The corrected Strategy B implementation preserves Markdown headings and uses a structure-aware hierarchy of section, paragraph, and sentence boundaries. This avoids heading-only chunks while keeping headings available as retrieval context.
+
+The experiment does not show a measurable accuracy advantage for Strategy B at k=5. Its main structural benefit is preserving semantic boundaries and heading context, while its smaller chunks increase the number of vectors that must be embedded and searched. Increasing k also increases the amount of retrieved context and therefore retrieval work, although the effect on this small dataset is limited.
+
+Q3 remains PARTIAL because the evaluation is restricted to the supplied reference document. Q9 remains NO because the requested blood-glucose target range is absent from the source; no external medical information was substituted.

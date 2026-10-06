@@ -49,72 +49,42 @@ range is substituted.
 | Q10 | What symptoms should prompt someone to seek emergency medical care? | YES | YES |
 
 Top-three chunk IDs and cosine scores for all 20 evaluations are in
-[`results/summary.csv`](results/summary.csv). The full JSON record,
-[`results/rag_run_20261005T103320.956233Z_509c0208157e.json`](results/rag_run_20261005T103320.956233Z_509c0208157e.json),
 also contains every retrieved chunk's text, source offsets, heading path,
 similarity score, embedding fingerprints, exact assembled context, manual
 justification, and model asset hashes.
-
-## Analysis
-
-The structure-aware strategy scored 80% (8/10 YES) versus 70% (7/10) for
-fixed-size chunking, a gain of one question or 10 percentage points. Both
-methods retrieved enough evidence for Q1, Q2, Q4, Q5, Q6, Q8, and Q10. B recovered
-the macrovascular-complications section at rank 2 for Q7, while A's top three
-contained microvascular complications, emergency-care text, and symptoms but
-never surfaced the macrovascular list. That is the only question on which B
-changed a NO to YES.
-
-Both strategies scored NO on Q9. The source lists diagnostic thresholds and
-recommends monitoring, but does not state a target range for most adults. This
-is a source-coverage limitation; no outside clinical range was added. Both
-scored PARTIAL on Q3 because the source lists several oral drug classes but
-explicitly identifies only metformin as usually first-line. Without outside
-information, it does not support three first-line agents.
-
-## Analysis
-
-Strategy A uses fixed 500-character chunks with a 50-character overlap. It is the simpler and faster approach: chunking is a straightforward linear pass over the document, and the final index contains 17 chunks with a mean size of 490.29 characters. Its main weakness is that fixed boundaries can split tables, lists, and related statements across chunks.
-
-Strategy B uses the document's Markdown hierarchy first, then paragraph boundaries, then sentence boundaries when a structural unit exceeds the configured 500-character budget. I chose this approach because the supplied reference is explicitly organized into numbered sections and subsections. Preserving that structure is deterministic, interpretable, and reproducible, while avoiding another semantic model or subjective threshold. The final B index contains 22 chunks, averaging 320.14 characters, with a minimum of 40 and maximum of 590 characters.
-
-B has more chunking and retrieval overhead than A because it performs structural parsing and produces more index entries. Retrieval scans 22 chunks for B versus 17 for A. Increasing k from 3 to 5 increases the amount of returned context and downstream inspection, although the similarity calculation still ranks the full index.
-
-On this small curated set, k=3 gives 70% retrieval accuracy for A and 80% for B. At k=5, A falls to 60% while B remains at 80%. The clearest result is Q7: B misses the Macrovascular Complications evidence at k=3 but retrieves it at rank 5 with k=5. Q8 also shows that a larger k does not automatically improve retrieval: A's top five still miss the monitoring-frequency evidence.
-
-Q3 is PARTIAL for both strategies because the source lists several oral medication classes but explicitly identifies only metformin as usually first-line; the experiment does not import outside medical knowledge. Q9 remains NO because the supplied reference does not provide the requested blood-glucose target range. These results support a useful recall advantage for structure-aware chunking on this document, but do not establish broad superiority.
 
 ## Results
 
 ### Chunk statistics
 
-| Strategy | k | Chunks | Average chars | Min chars | Max chars | YES | PARTIAL | NO | Accuracy |
+| Strategy | k | Chunks | Mean chars | Min | Max | YES | PARTIAL | NO | Accuracy |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | A — Basic / Naive | 3 | 17 | 490.29 | 335 | 500 | 7 | 1 | 2 | 70% |
-| B — Structure-aware | 3 | 22 | 320.14 | 40 | 590 | 8 | 1 | 1 | 80% |
-| A — Basic / Naive | 5 | 17 | 490.29 | 335 | 500 | 6 | 1 | 3 | 60% |
-| B — Structure-aware | 5 | 22 | 320.14 | 40 | 590 | 8 | 1 | 1 | 80% |
+| B — Structure-Aware | 3 | 26 | 285.69 | 16 | 590 | 8 | 1 | 1 | 80% |
+| A — Basic / Naive | 5 | 17 | 490.29 | 335 | 500 | 8 | 1 | 1 | 80% |
+| B — Structure-Aware | 5 | 26 | 285.69 | 16 | 590 | 8 | 1 | 1 | 80% |
 
-### Question-by-question evaluation
+### Question-by-question retrieval results
 
 | Question | A k=3 | B k=3 | A k=5 | B k=5 |
 |---|---|---|---|---|
-| Q1 — Diagnostic criteria | YES | YES | YES | YES |
-| Q2 — Prediabetes HbA1c range | YES | YES | YES | YES |
-| Q3 — Three first-line oral medications | PARTIAL | PARTIAL | PARTIAL | PARTIAL |
-| Q4 — Classic hyperglycemia symptoms | YES | YES | YES | YES |
-| Q5 — Lifestyle modifications | YES | YES | YES | YES |
-| Q6 — Microvascular complications | YES | YES | YES | YES |
-| Q7 — Macrovascular complications | NO | NO | NO | YES |
-| Q8 — HbA1c monitoring frequency | YES | YES | NO | YES |
-| Q9 — Blood glucose target range | NO | NO | NO | NO |
-| Q10 — Emergency symptoms | YES | YES | YES | YES |
+| Q1 Diagnostic criteria | YES | YES | YES | YES |
+| Q2 Prediabetes HbA1c range | YES | YES | YES | YES |
+| Q3 Three first-line oral medications | PARTIAL | PARTIAL | PARTIAL | PARTIAL |
+| Q4 Classic hyperglycemia symptoms | YES | YES | YES | YES |
+| Q5 Lifestyle modifications | YES | YES | YES | YES |
+| Q6 Microvascular complications | YES | YES | YES | YES |
+| Q7 Macrovascular complications | NO | YES | YES | YES |
+| Q8 HbA1c monitoring frequency | YES | YES | YES | YES |
+| Q9 Blood glucose target range | NO | NO | NO | NO |
+| Q10 Emergency symptoms | YES | YES | YES | YES |
 
 Full retrieved chunk text, chunk IDs, similarity scores, offsets, and heading paths are preserved in the final run JSON files. The source-grounded manual judgments are recorded in `results/manual_evaluation.md`.
 
-Final runs:
-- `results/rag_run_20261006T103820.038159Z_cc70ba5ff65d.json` — Strategy A/B, k=3
-- `results/rag_run_20261006T105337.252112Z_f49b824d1ec6.json` — Strategy A/B, k=5
+### Final runs
+
+- `results/rag_run_20261006T123036.769040Z_cc70ba5ff65d.json` — Strategy A/B, k=3
+- `results/rag_run_20261006T123055.709077Z_f49b824d1ec6.json` — Strategy A/B, k=5
 
 ## Run
 
