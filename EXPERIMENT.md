@@ -43,7 +43,7 @@ At k=3, Strategy A achieves 70% retrieval accuracy and Strategy B achieves 80%. 
 
 At k=5, both strategies achieve 80%. Strategy A retrieves the Q7 macrovascular evidence at rank 5. Therefore, the k=3 improvement should be interpreted as a retrieval-depth result on this ten-question set, not as proof that Strategy B is universally superior.
 
-Strategy B produces more chunks (26 versus 17) and smaller average chunks (285.69 versus 490.29 characters). This improves structural coherence but increases embedding and similarity-comparison work and requires a more complex parser than fixed character slicing.
+Strategy B produces more chunks (24 versus 17) and smaller average chunks (309.50 versus 490.29 characters). This improves structural coherence but increases embedding and similarity-comparison work and requires a more complex parser than fixed character slicing.
 
 ## Reproduction
 From the project root:
