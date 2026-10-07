@@ -39,11 +39,11 @@ Evaluation is source-grounded and manual. YES means sufficient evidence, PARTIAL
 Q3 is PARTIAL because the source identifies metformin as usually first-line but does not provide three named first-line oral medications. Q9 is NO because the source does not provide the requested adult blood-glucose target range. No outside medical information is substituted.
 
 ## Final findings
-At k=3, Strategy A achieves 70% retrieval accuracy and Strategy B achieves 80%. The clearest difference is Q7: Strategy B retrieves the macrovascular-complications evidence at rank 2, while Strategy A does not retrieve it within the top three.
+At k=3 the strategies tie at 70% (7 YES each). They differ on two questions in opposite directions: Strategy B retrieves the Q7 macrovascular evidence at rank 2 while Strategy A ranks it 5th, and Strategy A retrieves the full Q5 lifestyle list at rank 1 while Strategy B's top three contain only the heading-plus-introduction chunk (the list chunk ranks 4th, so Q5 is PARTIAL).
 
-At k=5, both strategies achieve 80%. Strategy A retrieves the Q7 macrovascular evidence at rank 5. Therefore, the k=3 improvement should be interpreted as a retrieval-depth result on this ten-question set, not as proof that Strategy B is universally superior.
+At k=5 both strategies reach 80%. Increasing k removed the difference. The hypothesis that structure-aware chunking improves retrieval is not supported on this document and ten-question set, which is small and was judged manually, not blind to the strategy.
 
-Strategy B produces more chunks (24 versus 17) and smaller average chunks (309.50 versus 490.29 characters). This improves structural coherence but increases embedding and similarity-comparison work and requires a more complex parser than fixed character slicing.
+Strategy B produces more chunks (24 versus 17) and smaller average chunks (309.50 versus 490.29 characters). This keeps topics together but increases embedding and similarity-comparison work and requires a more complex parser than fixed character slicing.
 
 ## Reproduction
 From the project root:

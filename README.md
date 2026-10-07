@@ -1,6 +1,106 @@
-## Hypothesis\n\nHypothesis: preserving document structure and semantic boundaries will improve retrieval of relevant evidence compared with fixed-size chunking when retrieval depth is held constant.\n\nControlled RAG Chunking Strategy Comparison\n\nScope and Method\n\nThis project compares a basic fixed-size RAG chunking strategy with a structure-aware chunking strategy using the same source document, questions, embedding model, similarity calculation, and retrieval procedure.\n\nThis is a retrieval-only experiment. No answer-generation model, external medical source, reranker, or similarity threshold is used.\n\nFixed experimental configuration\n\n- Source: "data/diabetes_reference_document.md"\n- Questions: the exact 10 questions in "data/questions.json"\n- Embedding model: "sentence-transformers/all-MiniLM-L6-v2"\n- Model revision: "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"\n- Inference: official ONNX graph and tokenizer from the same model revision\n- Token limit: 256 tokens\n- Pooling: attention-masked mean pooling\n- Normalization: L2 normalization\n- Similarity: NumPy cosine similarity\n- Retrieval depths: "k=3" and "k=5"\n- Reranker: none\n- Similarity threshold: none\n- Answer generation: none\n\nThe same embedding and retrieval pipeline is used for both strategies.\n\nChunking Strategies\n\nStrategy A — Basic / Naive\n\nThe document is divided into fixed 500-character chunks with 50-character overlap.\n\nThis follows the assignment's example baseline and deliberately does not consider semantic or document-structure boundaries.\n\nStrategy B — Structure-Aware\n\nThe document is parsed hierarchically:\n\nsection → paragraph → sentence\n\nHeadings are retained with their associated content rather than emitted as heading-only chunks. Paragraphs are preserved when they fit within the configured target; when a paragraph needs to be divided, sentence boundaries are used.\n\nThe target maximum is 500 characters, but a semantic unit may exceed that target when necessary rather than being split arbitrarily.\n\nThis approach was chosen because it preserves document structure and semantic boundaries while remaining deterministic, reproducible, and straightforward to inspect and explain. It also avoids introducing a more complex semantic-similarity chunking algorithm, which would add another variable to the experiment.\n\nRetrieval and Evaluation\n\nFor each question, a query embedding is compared with all chunk embeddings using cosine similarity. The highest-scoring "k" chunks are retrieved.\n\nThe experiment was evaluated manually against the supplied reference document.\n\n- YES: the retrieved context contains sufficient evidence for the requested answer.\n- PARTIAL: the context or the reference document provides only part of the requested information.\n- NO: the retrieved context cannot support the requested answer, or the requested information is absent from the supplied reference.\n\nTwo source limitations are important:\n\n- Q3 is PARTIAL because the reference identifies metformin as usually first-line but does not explicitly provide three named first-line oral medications.\n- Q9 is NO because the supplied reference does not provide the requested blood-glucose target range.\n\nNo outside medical information was substituted for either case.\n\nSummary Results\n\nStrategy| k| Chunks| Mean characters| Min–max characters| YES| PARTIAL| NO| Accuracy\nA — Basic / Naive| 3| 17| 490.29| 335–500| 7| 1| 2| 70%\nB — Structure-Aware| 3| 26| 285.69| 16–590| 8| 1| 1| 80%\nA — Basic / Naive| 5| 17| 490.29| 335–500| 8| 1| 1| 80%\nB — Structure-Aware| 5| 26| 285.69| 16–590| 8| 1| 1| 80%\n\nQuestion-by-Question Results\n\nQuestion| A k=3| B k=3| A k=5| B k=5\nQ1 Diagnostic criteria| YES| YES| YES| YES\nQ2 Prediabetes HbA1c range| YES| YES| YES| YES\nQ3 Three first-line oral medications| PARTIAL| PARTIAL| PARTIAL| PARTIAL\nQ4 Classic hyperglycemia symptoms| YES| YES| YES| YES\nQ5 Lifestyle modifications| YES| YES| YES| YES\nQ6 Microvascular complications| YES| YES| YES| YES\nQ7 Macrovascular complications| NO| YES| YES| YES\nQ8 HbA1c monitoring frequency| YES| YES| YES| YES\nQ9 Blood glucose target range| NO| NO| NO| NO\nQ10 Emergency symptoms| YES| YES| YES| YES\n\nKey retrieval difference\n\nAt "k=3", the clearest difference is Q7.\n\nStrategy A does not retrieve the macrovascular-complications evidence within its top three chunks, while Strategy B retrieves the relevant macrovascular evidence at rank 2.\n\nWhen retrieval depth increases to "k=5", Strategy A also retrieves the macrovascular evidence, at rank 5. Therefore the Strategy B advantage at "k=3" does not persist at "k=5".\n\nAnalysis\n\nThe results show a small retrieval advantage for Strategy B at "k=3", but not a universal advantage. Strategy B achieves 80% versus 70% for Strategy A at "k=3", primarily because its structure-aware chunks retrieve the macrovascular-complications evidence within the top three results. At "k=5", both strategies achieve 80%, because Strategy A retrieves that same evidence at rank 5.\n\nThe main trade-off is semantic coherence versus simplicity and retrieval cost. Strategy A creates only 17 relatively large chunks, with a mean size of 490.29 characters. It is simple to implement and requires fewer embeddings and fewer similarity comparisons. However, fixed character boundaries can separate related information or place useful terminology in less relevant chunks.\n\nStrategy B creates 24 smaller chunks, with a mean size of 309.50 characters. Preserving headings, paragraphs, and sentence boundaries makes the chunks easier to interpret and keeps related information together. The cost is a more complex parser and more vectors to embed and search. Smaller chunks also increase the number of candidates considered during similarity search.\n\nThe structure-aware approach was chosen because it tests a meaningful improvement in chunk construction without adding a second semantic model or another similarity-based decision process. It is deterministic, reproducible, and easy to explain.\n\nThe experiment therefore supports a limited conclusion: for this document and these ten questions, structure-aware chunking improved top-3 retrieval on one question, but the advantage disappeared at top-5 retrieval. It should not be interpreted as evidence that Strategy B is universally superior.\n\nResults and Reproducibility\n\nThe final run artifacts preserve retrieved chunk text, chunk IDs, source offsets, heading paths, similarity scores, and embedding/model fingerprints.\n\nThe source-grounded manual evaluation is stored in:\n\n"results/manual_evaluation.md"\n\nFinal run files:
+# Controlled RAG Chunking Strategy Comparison
 
-- `results/rag_run_20261007T062827.360367Z_cc70ba5ff65d.json` — k=3
-- `results/rag_run_20261007T062905.399087Z_f49b824d1ec6.json` — k=5
+## Hypothesis
 
-Reproduction\n\nFrom the project root:\n\n.pythonlibs/bin/python3 src/rag.py --config config/experiment.json\n.pythonlibs/bin/python3 src/rag.py --config config/experiment_k5.json\n\nBoth configurations use the same source document, questions, embedding model, and evaluation procedure; only the retrieval depth differs.\n
+Preserving document structure and semantic boundaries will improve retrieval of relevant evidence compared with fixed-size chunking when retrieval depth is held constant.
+
+## Scope and method
+
+This project compares a basic fixed-size RAG chunking strategy with a structure-aware chunking strategy using the same source document, questions, embedding model, similarity calculation and retrieval procedure.
+
+This is a retrieval-only experiment. No answer-generation model, external medical source, reranker or similarity threshold is used.
+
+Fixed configuration:
+
+- Source: `data/diabetes_reference_document.md` (7,535 characters)
+- Questions: the exact 10 questions in `data/questions.json`
+- Embedding model: `sentence-transformers/all-MiniLM-L6-v2`, revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`
+- Inference: official ONNX graph and tokenizer from the same model revision (the `sentence-transformers` package was unavailable in the environment)
+- Token limit: 256 tokens; attention-masked mean pooling; L2 normalization
+- Similarity: NumPy cosine similarity
+- Retrieval depths: k=3 and k=5
+- Reranker: none. Similarity threshold: none. Answer generation: none.
+
+## Chunking strategies
+
+**Strategy A, Basic / Naive.** Fixed 500-character chunks with a 50-character overlap (step 450). This follows the assignment's example baseline and ignores document structure.
+
+**Strategy B, Structure-Aware.** The document is split hierarchically: section (Markdown heading), then paragraph (blank line), then sentence, with a 500-character target.
+
+- A heading stays attached to the first unit under it. It is never emitted as its own chunk.
+- If a section fits within 500 characters it stays whole. Otherwise paragraphs are packed up to the target. A paragraph that is too long is split at sentence boundaries.
+- A single sentence is never cut, so a chunk can exceed 500 characters (maximum 590).
+
+I chose this approach because the reference document is organised into numbered sections, so headings are the author's own topic boundaries. It is deterministic and easy to inspect, and it avoids adding a second model or another similarity-based decision as an extra variable.
+
+## Evaluation
+
+Each retrieved top-k context was read and judged against the supplied reference:
+
+- **YES**: the retrieved text contains sufficient evidence for the full requested answer.
+- **PARTIAL**: it contains only part of the requested information.
+- **NO**: it cannot support the answer, or the reference does not contain it.
+
+Accuracy is YES count divided by 10. PARTIAL and NO do not count as correct. Judging was manual and not blind to the strategy.
+
+Two source limitations apply:
+
+- **Q3** is PARTIAL for both strategies: the reference names metformin as usually first-line but does not give three first-line oral drugs.
+- **Q9** is NO for both: the reference does not give the requested target glucose range.
+
+No outside medical information was used.
+
+## Results
+
+| Strategy | k | Chunks | Mean chars | Min–max chars | YES | PARTIAL | NO | Accuracy | Answerable-only (Q9 excluded) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A: Basic / Naive | 3 | 17 | 490.29 | 335–500 | 7 | 1 | 2 | 70% | 7/9 |
+| B: Structure-Aware | 3 | 24 | 309.50 | 74–590 | 7 | 2 | 1 | 70% | 7/9 |
+| A: Basic / Naive | 5 | 17 | 490.29 | 335–500 | 8 | 1 | 1 | 80% | 8/9 |
+| B: Structure-Aware | 5 | 24 | 309.50 | 74–590 | 8 | 1 | 1 | 80% | 8/9 |
+
+| Question | A, k=3 | B, k=3 | A, k=5 | B, k=5 |
+|---|---|---|---|---|
+| Q1 Diagnostic criteria | YES | YES | YES | YES |
+| Q2 Prediabetes HbA1c range | YES | YES | YES | YES |
+| Q3 Three first-line oral medications | PARTIAL | PARTIAL | PARTIAL | PARTIAL |
+| Q4 Classic hyperglycemia symptoms | YES | YES | YES | YES |
+| Q5 Lifestyle modifications | YES | PARTIAL | YES | YES |
+| Q6 Microvascular complications | YES | YES | YES | YES |
+| Q7 Macrovascular complications | NO | YES | YES | YES |
+| Q8 HbA1c monitoring frequency | YES | YES | YES | YES |
+| Q9 Blood-glucose target range | NO | NO | NO | NO |
+| Q10 Emergency symptoms | YES | YES | YES | YES |
+
+## What differs, and why
+
+At k=3 the strategies differ on two questions, in opposite directions.
+
+- **Q7 (B wins).** Strategy A's fixed cut mixed the end of the microvascular list with the start of the macrovascular section, so the chunk holding the macrovascular list (A-0011) scored 0.498 and ranked 5th, behind a purely microvascular chunk (0.711). Strategy B kept the macrovascular section as its own chunk, which ranked 2nd. At k=5, A also retrieves it.
+- **Q5 (A wins).** Strategy B split the lifestyle section into a short heading-plus-introduction chunk and a separate bullet-list chunk. The short chunk ranked first without the list, and the list chunk ranked 4th, so B's top 3 contained only two of the five lifestyle items. Strategy A's rank-1 chunk contained the heading and the full list. At k=5 B retrieves the list chunk.
+
+## Analysis
+
+The two strategies tie: 70% at k=3 and 80% at k=5. Where the cut falls decided each difference. Strategy A's fixed boundary broke the complications section, and Strategy B's heading boundary separated the lifestyle introduction from its list. The hypothesis, that structure-aware chunking would retrieve better, is therefore not supported on this document and question set.
+
+**Trade-offs.** Strategy A is simple and format-independent, with 17 relatively large chunks, but a fixed cut can place two topics in one chunk. Strategy B keeps topics together and is easier to inspect, but it needs a more complex parser, produces more vectors to embed and compare (24 versus 17), and depends on the document having clear headings. Increasing k from 3 to 5 removed the observed difference by letting the lower-ranked chunk in, at the cost of passing more text downstream.
+
+**Limitations.** Ten questions is a small sample: one question is ten percentage points. Judging was manual and not blind. Only one document was used. B attaches a heading only to the first paragraph under it, which can leave a short heading-plus-introduction chunk that ranks highly without containing the answer. Headings with no text of their own (the document title and `## 5.` and `## 6.`) are not emitted as chunks and appear only in each chunk's `heading_path` metadata.
+
+**Next steps.** Attach the heading to every sub-chunk, set a minimum chunk size, test k=1 and k=2, and add more questions and documents.
+
+## Reproduction
+
+```bash
+python3 src/rag.py --config config/experiment.json
+python3 src/rag.py --config config/experiment_k5.json
+```
+
+Both configurations use the same document, questions, embedding model and evaluation procedure; only the retrieval depth differs.
+
+Final run files:
+
+- `results/rag_run_20261007T062827.360367Z_cc70ba5ff65d.json`: k=3
+- `results/rag_run_20261007T062905.399087Z_f49b824d1ec6.json`: k=5
+
+Each run file records the retrieved chunk text, chunk IDs, source offsets, heading paths, similarity scores and model fingerprints. The run files mark manual evaluation as `not_assessed`; my judgments are in `results/manual_evaluation.md`.
