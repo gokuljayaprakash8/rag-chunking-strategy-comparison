@@ -467,14 +467,45 @@ def _sentence_spans(source: str, start: int, end: int) -> list[tuple[int, int]]:
 
 
 def _fit_structured_span(
-    source: str, start: int, end: int, max_chars: int | None
+    source: str,
+    start: int,
+    end: int,
+    max_chars: int,
 ) -> list[tuple[int, int]]:
-    """Keep sections intact unless an explicit size cap requires finer boundaries."""
-    if max_chars is None or end - start <= max_chars:
-        return [(start, end)]
+    """Fit a structure-aware section into semantic chunks.
 
-    units = _paragraph_spans(source, start, end)
+    The section heading is attached to the first substantive unit rather
+    than being emitted as a standalone chunk. This intentionally allows
+    the first chunk to exceed max_chars when necessary to preserve the
+    heading + first substantive unit together.
+    """
+    if end <= start:
+        return []
+
+    # Extract the section heading, if the section begins with a Markdown
+    # heading. The heading is metadata/context and must stay attached to
+    # the first substantive unit.
+    first_line_end = source.find("\n", start, end)
+    if first_line_end == -1:
+        first_line_end = end
+
+    first_line = source[start:first_line_end].strip()
+    heading_end = first_line_end + 1 if first_line_end < end else end
+
+    is_heading = first_line.startswith("#")
+    body_start = heading_end if is_heading else start
+
+    if body_start >= end:
+        return []
+
+    units = _paragraph_spans(source, body_start, end)
+
+    # If paragraph detection gives us nothing, fall back to the whole body.
+    if not units:
+        units = [(body_start, end)]
+
     output: list[tuple[int, int]] = []
+
     pending_start: int | None = None
     pending_end: int | None = None
 
@@ -485,43 +516,109 @@ def _fit_structured_span(
         pending_start = None
         pending_end = None
 
+    first_substantive = True
+
     for unit_start, unit_end in units:
-        if unit_end - unit_start > max_chars:
-            flush_pending()
-            sentences = _sentence_spans(source, unit_start, unit_end)
-            sentence_start: int | None = None
-            sentence_end: int | None = None
-            for part_start, part_end in sentences:
-                if part_end - part_start > max_chars:
-                    if sentence_start is not None and sentence_end is not None:
-                        output.append((sentence_start, sentence_end))
-                    sentence_start = None
-                    sentence_end = None
-                    # Never cut an overlong sentence arbitrarily.
-                    output.append((part_start, part_end))
-                    continue
-                if sentence_start is None:
-                    sentence_start, sentence_end = part_start, part_end
-                elif part_end - sentence_start <= max_chars:
-                    sentence_end = part_end
-                else:
-                    output.append((sentence_start, sentence_end or part_end))
-                    sentence_start, sentence_end = part_start, part_end
-            if sentence_start is not None and sentence_end is not None:
-                output.append((sentence_start, sentence_end))
+        if unit_end <= unit_start:
             continue
 
-        if pending_start is None:
-            pending_start, pending_end = unit_start, unit_end
-        elif unit_end - pending_start <= max_chars:
-            pending_end = unit_end
+        # The first substantive unit receives the heading as context.
+        effective_start = start if first_substantive and is_heading else unit_start
+
+        if unit_end - effective_start > max_chars:
+            # A heading + first paragraph is kept together even when it
+            # exceeds max_chars. For an oversized ordinary paragraph,
+            # split at sentence boundaries.
+            if first_substantive and is_heading:
+                sentences = _sentence_spans(source, unit_start, unit_end)
+
+                if not sentences:
+                    flush_pending()
+                    output.append((start, unit_end))
+                else:
+                    first_sentence_start, first_sentence_end = sentences[0]
+                    first_chunk_end = first_sentence_end
+
+                    # Keep heading attached to the first sentence.
+                    output.append((start, first_chunk_end))
+
+                    sentence_start: int | None = None
+                    sentence_end: int | None = None
+
+                    for part_start, part_end in sentences[1:]:
+                        if part_end - part_start > max_chars:
+                            if sentence_start is not None and sentence_end is not None:
+                                output.append((sentence_start, sentence_end))
+                            sentence_start = None
+                            sentence_end = None
+                            output.append((part_start, part_end))
+                            continue
+
+                        if sentence_start is None:
+                            sentence_start = part_start
+                            sentence_end = part_end
+                        elif part_end - sentence_start <= max_chars:
+                            sentence_end = part_end
+                        else:
+                            output.append((sentence_start, sentence_end))
+                            sentence_start = part_start
+                            sentence_end = part_end
+
+                    if sentence_start is not None and sentence_end is not None:
+                        output.append((sentence_start, sentence_end))
+
+            else:
+                flush_pending()
+                sentences = _sentence_spans(source, unit_start, unit_end)
+
+                if not sentences:
+                    output.append((unit_start, unit_end))
+                else:
+                    sentence_start: int | None = None
+                    sentence_end: int | None = None
+
+                    for part_start, part_end in sentences:
+                        if part_end - part_start > max_chars:
+                            if sentence_start is not None and sentence_end is not None:
+                                output.append((sentence_start, sentence_end))
+                            sentence_start = None
+                            sentence_end = None
+                            output.append((part_start, part_end))
+                            continue
+
+                        if sentence_start is None:
+                            sentence_start = part_start
+                            sentence_end = part_end
+                        elif part_end - sentence_start <= max_chars:
+                            sentence_end = part_end
+                        else:
+                            output.append((sentence_start, sentence_end))
+                            sentence_start = part_start
+                            sentence_end = part_end
+
+                    if sentence_start is not None and sentence_end is not None:
+                        output.append((sentence_start, sentence_end))
+
         else:
-            flush_pending()
-            pending_start, pending_end = unit_start, unit_end
+            if first_substantive and is_heading:
+                # Heading + first paragraph are atomic.
+                effective_start = start
+
+            if pending_start is None:
+                pending_start = effective_start
+                pending_end = unit_end
+            elif unit_end - pending_start <= max_chars:
+                pending_end = unit_end
+            else:
+                flush_pending()
+                pending_start = effective_start
+                pending_end = unit_end
+
+        first_substantive = False
 
     flush_pending()
-    return output or [(start, end)]
 
+    return output
 
 def structure_aware_chunks(
     source: str, max_chunk_characters: int | None = None
